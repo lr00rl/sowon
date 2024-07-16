@@ -124,6 +124,8 @@ float parse_time(const char *time)
     float result = 0.0f;
 
     while (*time) {
+        // start parser from head.
+        // endptr stored the prt where strtof can not parser.
         char *endptr = NULL;
         float x = strtof(time, &endptr);
 
