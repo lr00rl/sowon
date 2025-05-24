@@ -5,9 +5,13 @@
 #include <string.h>
 #include <time.h>
 
-#include <SDL.h>
+#include <SDL2/SDL.h>
 
 #include "./digits.h"
+
+#ifdef PENGER
+#include "./penger_walk_sheet.h"
+#endif
 
 #define FPS 60
 //#define DELTA_TIME (1.0f / FPS)
@@ -31,6 +35,8 @@
 #define BACKGROUND_COLOR_G 24
 #define BACKGROUND_COLOR_B 24
 #define SCALE_FACTOR 0.15f
+#define PENGER_SCALE 4
+#define PENGER_STEPS_PER_SECOND 3
 
 void secc(int code)
 {
@@ -50,15 +56,15 @@ void *secp(void *ptr)
     return ptr;
 }
 
-SDL_Surface *load_png_file_as_surface()
+SDL_Surface *load_png_file_as_surface(uint32_t *data, size_t width, size_t height)
 {
     SDL_Surface* image_surface =
         secp(SDL_CreateRGBSurfaceFrom(
-                 png,
-                 (int) png_width,
-                 (int) png_height,
+                 data,
+                 (int) width,
+                 (int) height,
                  32,
-                 (int) png_width * 4,
+                 (int) width * 4,
                  0x000000FF,
                  0x0000FF00,
                  0x00FF0000,
@@ -66,11 +72,19 @@ SDL_Surface *load_png_file_as_surface()
     return image_surface;
 }
 
-SDL_Texture *load_png_file_as_texture(SDL_Renderer *renderer)
+SDL_Texture *load_digits_png_file_as_texture(SDL_Renderer *renderer)
 {
-    SDL_Surface *image_surface = load_png_file_as_surface();
+    SDL_Surface *image_surface = load_png_file_as_surface(digits_data, digits_width, digits_height);
     return secp(SDL_CreateTextureFromSurface(renderer, image_surface));
 }
+
+#ifdef PENGER
+SDL_Texture *load_penger_png_file_as_texture(SDL_Renderer *renderer)
+{
+    SDL_Surface *image_surface = load_png_file_as_surface(penger_data, penger_width, penger_height);
+    return secp(SDL_CreateTextureFromSurface(renderer, image_surface));
+}
+#endif
 
 void render_digit_at(SDL_Renderer *renderer, SDL_Texture *digits, size_t digit_index,
                      size_t wiggle_index, int *pen_x, int *pen_y, float user_scale, float fit_scale)
@@ -93,6 +107,42 @@ void render_digit_at(SDL_Renderer *renderer, SDL_Texture *digits, size_t digit_i
     SDL_RenderCopy(renderer, digits, &src_rect, &dst_rect);
     *pen_x += effective_digit_width;
 }
+
+#ifdef PENGER
+void render_penger_at(SDL_Renderer *renderer, SDL_Texture *penger, float time, int flipped, SDL_Window *window)
+{
+    int window_width, window_height;
+    SDL_GetWindowSize(window, &window_width, &window_height);
+
+    int sps  = PENGER_STEPS_PER_SECOND;
+    
+    int step = (int)(time*sps)%(60*sps); //step index [0,60*sps-1]
+
+    float progress  = step/(60.0*sps); // [0,1]
+    
+    int frame_index = step%2;
+
+    float penger_drawn_width = ((float)penger_width / 2) / PENGER_SCALE;
+
+    float penger_walk_width = window_width + penger_drawn_width;
+
+    const SDL_Rect src_rect = {
+        (int) (penger_width / 2) * frame_index,
+        0,
+        (int) penger_width / 2,
+        (int) penger_height
+    };
+
+    SDL_Rect dst_rect = {
+        floorf((float)penger_walk_width * progress - penger_drawn_width),
+        window_height - (penger_height / PENGER_SCALE),
+        (int) (penger_width / 2) / PENGER_SCALE,
+        (int) penger_height / PENGER_SCALE
+    };
+
+    SDL_RenderCopyEx(renderer, penger, &src_rect, &dst_rect, 0, NULL, flipped);
+}
+#endif
 
 void initial_pen(SDL_Window *window, int *pen_x, int *pen_y, float user_scale, float *fit_scale)
 {
@@ -213,7 +263,8 @@ int main(int argc, char **argv)
     SDL_Window *window =
         secp(SDL_CreateWindow(
                  "sowon",
-                 0, 0, TEXT_WIDTH, TEXT_HEIGHT,
+                 0, 0,
+                 TEXT_WIDTH, TEXT_HEIGHT*2,
                  SDL_WINDOW_RESIZABLE));
 
     SDL_Renderer *renderer =
@@ -223,7 +274,12 @@ int main(int argc, char **argv)
 
     secc(SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear"));
 
-    SDL_Texture *digits = load_png_file_as_texture(renderer);
+    SDL_Texture *digits = load_digits_png_file_as_texture(renderer);
+
+    #ifdef PENGER
+    SDL_Texture *penger = load_penger_png_file_as_texture(renderer);
+    #endif
+
     secc(SDL_SetTextureColorMod(digits, MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B));
 
     if (paused) {
@@ -322,11 +378,20 @@ int main(int argc, char **argv)
         SDL_SetRenderDrawColor(renderer, BACKGROUND_COLOR_R, BACKGROUND_COLOR_G, BACKGROUND_COLOR_B, 255);
         SDL_RenderClear(renderer);
         {
+            const size_t t = (size_t) floorf(fmaxf(displayed_time, 0.0f));
+            // PENGER BEGIN //////////////////////////////
+
+            #ifdef PENGER
+            render_penger_at(renderer, penger, displayed_time, mode==MODE_COUNTDOWN, window);
+            #endif
+
+            // PENGER END //////////////////////////////
+
+            // DIGITS BEGIN //////////////////////////////
             int pen_x, pen_y;
             float fit_scale = 1.0;
             initial_pen(window, &pen_x, &pen_y, user_scale, &fit_scale);
 
-            const size_t t = (size_t) ceilf(fmaxf(displayed_time, 0.0f));
 
             // TODO: support amount of hours >99
             const size_t hours = t / 60 / 60;
@@ -349,6 +414,7 @@ int main(int argc, char **argv)
                 SDL_SetWindowTitle(window, title);
             }
             memcpy(title, prev_title, TITLE_CAP);
+            // DIGITS END //////////////////////////////
         }
         SDL_RenderPresent(renderer);
         // RENDER END //////////////////////////////
@@ -377,11 +443,20 @@ int main(int argc, char **argv)
                 }
             } break;
             case MODE_CLOCK: {
+                float displayed_time_prev = displayed_time;
                 time_t t = time(NULL);
                 struct tm *tm = localtime(&t);
                 displayed_time = tm->tm_sec
                                + tm->tm_min  * 60.0f
                                + tm->tm_hour * 60.0f * 60.0f;
+                if(displayed_time <= displayed_time_prev){
+                    //same second, keep previous count and add subsecond resolution for penger
+                    if(floorf(displayed_time_prev) == floorf(displayed_time_prev+fps_dt.dt)){ //check for no newsecond shenaningans from dt
+                        displayed_time = displayed_time_prev + fps_dt.dt; 
+                    }else{
+                        displayed_time = displayed_time_prev;
+                    }
+                }
             } break;
             }
         }
